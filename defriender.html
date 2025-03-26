@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Defriender HD Remix (v2)</title>
+    <style>
+        html, body {
+            background-color: #000;
+            color: #fff;
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden; /* Prevent scrollbars on body */
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center; /* Center the container vertically */
+        }
+
+        #gameContainer {
+            position: relative; /* For absolute positioning of canvas */
+            width: 95vw; /* Use most of the viewport width */
+            max-width: 1280px; /* But don't exceed HD width */
+            aspect-ratio: 16 / 9; /* Maintain aspect ratio */
+            margin: auto; /* Center horizontally */
+            background: #111; /* Fallback background */
+            box-shadow: 0 0 15px #0f0; /* Optional glow */
+            display: flex; /* Use flex for canvas positioning */
+            justify-content: center;
+            align-items: center;
+        }
+
+        canvas {
+            display: block;
+             /* --- Canvas Scaling --- */
+             /* The canvas element scales visually, but drawing uses attributes */
+            width: 100%;
+            height: 100%;
+            object-fit: contain; /* Scale while preserving aspect ratio */
+            /* image-rendering: pixelated; /* Uncomment for sharp pixels */
+        }
+
+        #ui {
+            font-size: 1.2em; /* Adjust base size as needed */
+            width: 95%; /* Match container width roughly */
+            max-width: 1280px;
+            margin: 10px auto 0 auto; /* Space above, center */
+            display: flex;
+            justify-content: space-around; /* Distribute items */
+            flex-wrap: wrap; /* Allow wrapping on small screens */
+            padding: 5px;
+            background-color: rgba(0,0,0,0.5); /* Slight background for readability */
+            border-radius: 5px;
+            text-align: center;
+        }
+         /* Adjust UI spacing for smaller screens maybe */
+         @media (max-width: 600px) {
+             #ui { font-size: 1em; }
+         }
+
+
+        #startupScreen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.97); /* Slightly more opaque */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            text-align: center;
+            color: #0f0;
+            font-size: 1.5em; /* Base size, scales with viewport somewhat */
+            line-height: 1.7;
+            padding: 15px;
+            box-sizing: border-box;
+        }
+        #startupScreen h1 {
+            color: #ff0;
+            font-size: 3em; /* Relative unit */
+            margin-bottom: 20px;
+            text-shadow: 3px 3px #f00;
+        }
+         #startupScreen h2 {
+             color: #0ff;
+             font-size: 1.5em;
+             margin-top: -15px;
+             margin-bottom: 30px;
+         }
+        #startupScreen strong {
+            color: #fff;
+        }
+        #startupScreen p {
+            margin: 6px 0;
+        }
+        .controls {
+            margin-top: 20px;
+            margin-bottom: 30px;
+            border: 2px solid #0f0;
+            padding: 20px;
+            display: inline-block;
+            max-width: 90%;
+        }
+        .blink {
+            animation: blink-animation 1s steps(2, start) infinite;
+            color: #ff0;
+        }
+        @keyframes blink-animation {
+            to {
+                visibility: hidden;
+            }
+        }
+        #shieldStatus {
+             color: #888;
+             transition: color 0.3s ease;
+        }
+         #shieldStatus.active { color: #0FF; }
+         #shieldStatus.cooldown { color: #F00; }
+
+    </style>
+</head>
+<body>
+
+    <div id="startupScreen">
+        <h1>DEFRIENDER</h1>
+        <h2>HD REMIX</h2>
+        <div class="controls">
+            <p>--- CONTROLS ---</p>
+            <p><strong>ARROW UP</strong> / <strong>W</strong> : Move Up</p>
+            <p><strong>ARROW DOWN</strong> / <strong>S</strong> : Move Down</p>
+            <p><strong>ARROW LEFT</strong> / <strong>A</strong> : Thrust Left</p>
+            <p><strong>ARROW RIGHT</strong> / <strong>D</strong> : Thrust Right</p>
+            <p><strong>SPACEBAR</strong> : Fire Laser</p>
+            <p><strong>B</strong> : Activate Smart Bomb</p>
+            <p><strong>SHIFT</strong> : Activate Shield (1s Duration, 5s Cooldown)</p>
+        </div>
+        <p>PROTECT THE HUMANOIDS FROM THE ALIEN LANDERS!</p>
+        <p>RESCUE ABDUCTED HUMANOIDS FOR BONUS POINTS.</p>
+        <p class="blink">PRESS ENTER TO START</p>
+    </div>
+
+    <!-- Container for Scaled Canvas and UI -->
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="1280" height="720"></canvas>
+    </div>
+    <div id="ui">
+        <span id="score">Score: 0</span>
+        <span id="lives">Lives: 3</span>
+        <span id="bombs">Bombs: 3</span>
+        <span id="humanoidsLeft">Friends: 10</span>
+        <span id="shieldStatus">Shield Ready</span>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const livesEl = document.getElementById('lives');
+        const bombsEl = document.getElementById('bombs');
+        const humanoidsLeftEl = document.getElementById('humanoidsLeft');
+        const shieldStatusEl = document.getElementById('shieldStatus');
+        const startupScreen = document.getElementById('startupScreen');
+
+        // --- Graphics Settings ---
+        ctx.imageSmoothingEnabled = true; // Enable anti-aliasing (usually default)
+
+        // --- Game Constants ---
+        const GAME_WIDTH = 1280;
+        const GAME_HEIGHT = 720;
+        const WORLD_WIDTH = GAME_WIDTH * 4;
+        const GROUND_HEIGHT = 50;
+        const STAR_COUNT = 400; // Increased star count
+
+        // Player
+        const PLAYER_BASE_WIDTH = 40;
+        const PLAYER_BASE_HEIGHT = 20;
+        const PLAYER_COLLISION_RADIUS = 15;
+        const PLAYER_SPEED_Y = 5;
+        const PLAYER_SPEED_X = 7;
+        const PLAYER_MAX_BULLETS = 5;
+        const BULLET_SPEED = 12;
+        const BULLET_WIDTH = 8;
+        const BULLET_HEIGHT = 4;
+        const FIRE_COOLDOWN = 7;
+
+        // Shield
+        const SHIELD_DURATION = 1000;
+        const SHIELD_COOLDOWN = 5000;
+
+        // Humanoids
+        const HUMANOID_WIDTH = 12;
+        const HUMANOID_HEIGHT = 18;
+        const HUMANOID_SPEED = 0.7;
+        const INITIAL_HUMANOIDS = 10;
+
+        // Enemies
+        const LANDER_WIDTH = 25;
+        const LANDER_HEIGHT = 25;
+        const LANDER_SPEED = 2.0;
+        const LANDER_SCORE = 150;
+
+        const MUTANT_WIDTH = 28;
+        const MUTANT_HEIGHT = 22;
+        const MUTANT_SPEED_BASE = 3.5;
+        const MUTANT_SCORE = 250;
+
+        // Particles
+        const PARTICLE_COUNT = 20;
+        const PARTICLE_LIFE = 40;
+        const THRUST_PARTICLE_LIFE = 15; // Shorter life for thrust
+        const THRUST_PARTICLE_CHANCE = 0.6; // Chance to spawn per frame when thrusting
+
+        // Scoring
+        const RESCUE_SCORE = 500;
+        const CATCH_SCORE = 1000;
+        const WAVE_HUMANOID_BONUS = 100;
+
+        // --- Audio ---
+        let audioCtx;
+        const sounds = {}; // Keep if planning buffer loading later
+
+        function initAudio() {
+            if (audioCtx) return; // Already initialized
+            try {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                // Attempt to unlock on first interaction (done in listeners too)
+                const unlock = () => {
+                   if(audioCtx && audioCtx.state === 'suspended'){
+                       audioCtx.resume();
+                   }
+                   document.body.removeEventListener('click', unlock);
+                   window.removeEventListener('keydown', unlock);
+                };
+                document.body.addEventListener('click', unlock);
+                window.addEventListener('keydown', unlock);
+            } catch (e) {
+                console.error("Web Audio API is not supported in this browser");
+            }
+        }
+
+        // Simple programmatic sound player (modified slightly for safety)
+        function playSound(type) {
+            if (!audioCtx || audioCtx.state !== 'running') {
+                // console.log("Audio context not ready, cannot play sound:", type);
+                return;
+            }
+
+            try {
+                 const now = audioCtx.currentTime;
+                 const osc = audioCtx.createOscillator();
+                 const gain = audioCtx.createGain();
+                 osc.connect(gain);
+                 gain.connect(audioCtx.destination);
+
+                 gain.gain.setValueAtTime(0, now);
+
+                 // --- Sound definitions (same as before) ---
+                 switch (type) {
+                     case 'shoot':
+                         osc.type = 'square';
+                         osc.frequency.setValueAtTime(880, now);
+                         osc.frequency.linearRampToValueAtTime(440, now + 0.05);
+                         gain.gain.linearRampToValueAtTime(0.15, now + 0.01);
+                         gain.gain.linearRampToValueAtTime(0, now + 0.06);
+                         osc.start(now);
+                         osc.stop(now + 0.06);
+                         break;
+                     case 'explode_enemy':
+                         osc.type = 'sawtooth';
+                         const startFreq = 200 + Math.random() * 100;
+                         osc.frequency.setValueAtTime(startFreq, now);
+                         osc.frequency.exponentialRampToValueAtTime(50, now + 0.4);
+                         gain.gain.linearRampToValueAtTime(0.3, now + 0.02);
+                         gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+                         osc.start(now);
+                         osc.stop(now + 0.4);
+                          // Noise
+                          const noise = audioCtx.createBufferSource();
+                          const bufferSize = audioCtx.sampleRate * 0.3;
+                          const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                          const output = buffer.getChannelData(0);
+                          for (let i = 0; i < bufferSize; i++) output[i] = (Math.random() * 2 - 1) * 0.8;
+                          noise.buffer = buffer;
+                          const noiseGain = audioCtx.createGain();
+                          noise.connect(noiseGain); noiseGain.connect(audioCtx.destination);
+                          noiseGain.gain.setValueAtTime(0.2, now);
+                          noiseGain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                          noise.start(now); noise.stop(now+0.3);
+                         break;
+                      case 'explode_player':
+                          osc.type = 'sawtooth';
+                          osc.frequency.setValueAtTime(150, now);
+                          osc.frequency.exponentialRampToValueAtTime(30, now + 0.8);
+                          gain.gain.linearRampToValueAtTime(0.5, now + 0.05);
+                          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.8);
+                          osc.start(now); osc.stop(now + 0.8);
+                          // Louder noise
+                          const pNoise = audioCtx.createBufferSource();
+                          const pBufferSize = audioCtx.sampleRate * 0.7;
+                          const pBuffer = audioCtx.createBuffer(1, pBufferSize, audioCtx.sampleRate);
+                          const pOutput = pBuffer.getChannelData(0);
+                          for (let i = 0; i < pBufferSize; i++) pOutput[i] = (Math.random() * 2 - 1);
+                          pNoise.buffer = pBuffer;
+                          const pNoiseGain = audioCtx.createGain();
+                          pNoise.connect(pNoiseGain); pNoiseGain.connect(audioCtx.destination);
+                          pNoiseGain.gain.setValueAtTime(0.4, now);
+                          pNoiseGain.gain.exponentialRampToValueAtTime(0.01, now + 0.7);
+                          pNoise.start(now); pNoise.stop(now+0.7);
+                          break;
+                     case 'shield_up':
+                         osc.type = 'sine';
+                         osc.frequency.setValueAtTime(660, now);
+                         osc.frequency.linearRampToValueAtTime(1320, now + 0.15);
+                         gain.gain.linearRampToValueAtTime(0.3, now + 0.05);
+                         gain.gain.linearRampToValueAtTime(0, now + 0.2);
+                         osc.start(now); osc.stop(now + 0.2);
+                         break;
+                     case 'shield_down':
+                         osc.type = 'sine';
+                         osc.frequency.setValueAtTime(880, now);
+                         osc.frequency.linearRampToValueAtTime(440, now + 0.2);
+                         gain.gain.linearRampToValueAtTime(0.2, now + 0.05);
+                         gain.gain.linearRampToValueAtTime(0, now + 0.25);
+                         osc.start(now); osc.stop(now + 0.25);
+                         break;
+                     case 'human_rescue':
+                          osc.type = 'triangle';
+                          osc.frequency.setValueAtTime(1046.50, now);
+                          gain.gain.linearRampToValueAtTime(0.3, now + 0.02);
+                          gain.gain.linearRampToValueAtTime(0, now + 0.15);
+                          osc.start(now); osc.stop(now + 0.15);
+                          break;
+                     case 'human_fall_die':
+                          osc.type = 'square';
+                          osc.frequency.setValueAtTime(110, now);
+                          gain.gain.linearRampToValueAtTime(0.25, now + 0.02);
+                          gain.gain.linearRampToValueAtTime(0, now + 0.1);
+                          osc.start(now); osc.stop(now + 0.1);
+                          break;
+                     default:
+                         osc.disconnect(); gain.disconnect(); break;
+                 }
+            } catch (e) {
+                 console.error("Error playing sound:", type, e);
+            }
+        }
+
+
+        // --- Game State ---
+        let score = 0, lives = 3, smartBombs = 3, humanoidsCount = INITIAL_HUMANOIDS;
+        let scrollOffset = 0, currentWave = 1; // Start wave at 1 logically
+        let gameOver = false, gameStarted = false, planetDestroyed = false;
+        let player = {}, bullets = [], enemies = [], humanoids = [], particles = [], stars = [];
+        let shieldActive = false, shieldCooldownTimer = 0, shieldDurationTimer = 0;
+        let lastTimestamp = 0;
+        let keys = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false,
+                     KeyW: false, KeyS: false, KeyA: false, KeyD: false,
+                     Space: false, ShiftLeft: false, KeyB: false };
+
+        // --- Utility Functions ---
+        function getRandomInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+        function getRandomFloat(min, max) { return Math.random() * (max - min) + min; }
+        function wrapValue(value, max) { return (value % max + max) % max; }
+        function distSq(x1, y1, x2, y2) { const dx = x1 - x2; const dy = y1 - y2; return dx * dx + dy * dy; }
+        function isCircleRectCollision(circleX, circleY, circleR, rectX, rectY, rectW, rectH) {
+             const closestX = Math.max(rectX, Math.min(circleX, rectX + rectW));
+             const closestY = Math.max(rectY, Math.min(circleY, rectY + rectH));
+             return distSq(circleX, circleY, closestX, closestY) < (circleR * circleR);
+        }
+        function worldToScreenX(worldX) { return worldX - scrollOffset; } // Simplified: primary position
+
+        // --- Game Object Creation ---
+        function createPlayer() {
+             return { x: WORLD_WIDTH / 2, y: GAME_HEIGHT / 2, dx: 0, facingRight: true, fireCooldown: 0 };
+        }
+        function createBullet(x, y, facingRight) {
+             return { x, y, width: BULLET_WIDTH, height: BULLET_HEIGHT, speed: facingRight ? BULLET_SPEED : -BULLET_SPEED };
+        }
+        function createHumanoid() {
+            return { x: getRandomInt(0, WORLD_WIDTH - HUMANOID_WIDTH), y: GAME_HEIGHT - GROUND_HEIGHT - HUMANOID_HEIGHT, width: HUMANOID_WIDTH, height: HUMANOID_HEIGHT, speed: (Math.random() > 0.5 ? 1 : -1) * HUMANOID_SPEED, state: 'walking', abductor: null };
+        }
+        function createLander(targetHumanoid = null) {
+             const xPos = targetHumanoid ? targetHumanoid.x : wrapValue(player.x + getRandomInt(-GAME_WIDTH * 0.8, GAME_WIDTH * 0.8), WORLD_WIDTH);
+             return { type: 'lander', x: xPos, y: getRandomInt(PLAYER_BASE_HEIGHT, GAME_HEIGHT / 3), width: LANDER_WIDTH, height: LANDER_HEIGHT, speed: LANDER_SPEED + (currentWave * 0.15), targetHumanoid, carrying: null, state: 'descending' };
+        }
+        function createMutant(x, y) {
+             return { type: 'mutant', x, y, width: MUTANT_WIDTH, height: MUTANT_HEIGHT, speed: MUTANT_SPEED_BASE + (currentWave * 0.25) };
+        }
+
+        // Particle creation - added thrust type
+        function createParticle(x, y, color = '#FFA500', sizeMult = 1.0, life = PARTICLE_LIFE, vx = (Math.random() - 0.5) * 6, vy = (Math.random() - 0.5) * 6) {
+            return { x, y, size: getRandomInt(2, 6) * sizeMult, life, vx, vy, color };
+        }
+        function createExplosion(x, y, count = PARTICLE_COUNT, color = '#FFA500', sizeMult = 1.0) {
+            for (let i = 0; i < count; i++) particles.push(createParticle(x, y, color, sizeMult));
+            playSound('explode_enemy');
+        }
+
+        function createStars() {
+            stars = [];
+            for (let i = 0; i < STAR_COUNT; i++) {
+                stars.push({
+                    x: Math.random() * WORLD_WIDTH,
+                    y: Math.random() * (GAME_HEIGHT - GROUND_HEIGHT),
+                    size: Math.random() * 2.5,
+                    parallaxFactor: getRandomFloat(0.02, 0.8) // Wider range
+                });
+            }
+        }
+
+        // --- Update Functions ---
+        function updatePlayer(deltaTime) {
+            if (player.fireCooldown > 0) player.fireCooldown -= 1;
+
+            const moveUp = keys.ArrowUp || keys.KeyW;
+            const moveDown = keys.ArrowDown || keys.KeyS;
+            if (moveUp && player.y > 0) player.y -= PLAYER_SPEED_Y;
+            if (moveDown && player.y < GAME_HEIGHT - GROUND_HEIGHT - PLAYER_BASE_HEIGHT) player.y += PLAYER_SPEED_Y;
+
+            const moveLeft = keys.ArrowLeft || keys.KeyA;
+            const moveRight = keys.ArrowRight || keys.KeyD;
+            let thrust = 0;
+             let isThrusting = false; // Flag for particle effect
+            if (moveLeft) { thrust = -PLAYER_SPEED_X; player.facingRight = false; isThrusting = true;}
+            if (moveRight) { thrust = PLAYER_SPEED_X; player.facingRight = true; isThrusting = true;}
+
+             // --- Thrust Particle Generation ---
+             if (isThrusting && Math.random() < THRUST_PARTICLE_CHANCE) {
+                  const particleX = player.x + (player.facingRight ? 0 : PLAYER_BASE_WIDTH * 0.9); // Emit from back
+                  const particleY = player.y + PLAYER_BASE_HEIGHT / 2 + (Math.random() - 0.5) * PLAYER_BASE_HEIGHT * 0.5; // Slight Y spread
+                  const particleVX = (player.facingRight ? -1 : 1) * PLAYER_SPEED_X * 0.5 + (Math.random() - 0.5) * 4; // Opposite dir + spread
+                  const particleVY = (Math.random() - 0.5) * 4;
+                  particles.push(createParticle(particleX, particleY, '#F80', 0.6, THRUST_PARTICLE_LIFE, particleVX, particleVY));
+             }
+             // --- End Thrust Particles ---
+
+            player.dx = thrust;
+            player.x += player.dx;
+            player.x = wrapValue(player.x, WORLD_WIDTH);
+
+            // Scrolling (same logic)
+            const playerScreenX = worldToScreenX(player.x);
+            const screenCenterX = GAME_WIDTH / 2;
+            const followMargin = GAME_WIDTH / 3.5;
+            if (player.dx !== 0) {
+                if (player.dx > 0 && playerScreenX > screenCenterX + followMargin) scrollOffset += player.dx;
+                else if (player.dx < 0 && playerScreenX < screenCenterX - followMargin) scrollOffset += player.dx;
+            }
+            scrollOffset = wrapValue(scrollOffset, WORLD_WIDTH);
+
+            // Firing (same logic)
+            if (keys.Space && player.fireCooldown <= 0 && bullets.length < PLAYER_MAX_BULLETS) {
+                const bulletSpawnDist = PLAYER_BASE_WIDTH / 2;
+                const bulletX = player.x + (player.facingRight ? bulletSpawnDist : -bulletSpawnDist);
+                const bulletY = player.y + PLAYER_BASE_HEIGHT / 4;
+                bullets.push(createBullet(bulletX, bulletY, player.facingRight));
+                player.fireCooldown = FIRE_COOLDOWN;
+                playSound('shoot');
+            }
+
+            updateShield(deltaTime);
+        }
+
+        function updateShield(deltaTime) {
+             const deltaMillis = deltaTime || (1000 / 60);
+             if (shieldActive) {
+                 shieldDurationTimer -= deltaMillis;
+                 if (shieldDurationTimer <= 0) {
+                     shieldActive = false; shieldDurationTimer = 0;
+                     playSound('shield_down'); updateShieldUI();
+                 }
+             } else if (shieldCooldownTimer > 0) {
+                 shieldCooldownTimer -= deltaMillis;
+                 if (shieldCooldownTimer <= 0) { shieldCooldownTimer = 0; updateShieldUI(); }
+             }
+             if (keys.ShiftLeft && !shieldActive && shieldCooldownTimer <= 0) {
+                 shieldActive = true; shieldDurationTimer = SHIELD_DURATION; shieldCooldownTimer = SHIELD_COOLDOWN;
+                 playSound('shield_up'); updateShieldUI();
+             }
+        }
+        function updateBullets(deltaTime) {
+             for (let i = bullets.length - 1; i >= 0; i--) {
+                 const bullet = bullets[i];
+                 bullet.x += bullet.speed;
+                 bullet.x = wrapValue(bullet.x, WORLD_WIDTH);
+                 const bulletScreenX = worldToScreenX(bullet.x);
+                 if (bulletScreenX < -GAME_WIDTH/2 || bulletScreenX > GAME_WIDTH * 1.5) { bullets.splice(i, 1); continue; }
+                 let bulletRemoved = false;
+                 for (let j = enemies.length - 1; j >= 0; j--) {
+                     const enemy = enemies[j];
+                     const enemyScreenX = worldToScreenX(enemy.x);
+                     const enemyRect = { x: enemyScreenX, y: enemy.y, width: enemy.width, height: enemy.height };
+                     const bulletRect = { x: bulletScreenX, y: bullet.y, width: bullet.width, height: bullet.height };
+                     if (bulletRect.x < enemyRect.x + enemyRect.width && bulletRect.x + bulletRect.width > enemyRect.x && bulletRect.y < enemyRect.y + enemyRect.height && bulletRect.y + bulletRect.height > enemyRect.y) {
+                         createExplosion(enemy.x, enemy.y);
+                         score += (enemy.type === 'lander') ? LANDER_SCORE : MUTANT_SCORE;
+                         if (enemy.type === 'lander' && enemy.carrying) { enemy.carrying.state = 'falling'; enemy.carrying.abductor = null; score += RESCUE_SCORE; }
+                         enemies.splice(j, 1); bullets.splice(i, 1); bulletRemoved = true; break;
+                     }
+                 }
+                 if (bulletRemoved) continue;
+             }
+        }
+        function updateHumanoids(deltaTime) {
+            humanoidsCount = 0;
+            for (let i = humanoids.length - 1; i >= 0; i--) {
+                const h = humanoids[i];
+                if (h.state === 'walking') {
+                    humanoidsCount++; h.x += h.speed;
+                    if (h.x <= 0 || h.x >= WORLD_WIDTH - h.width) { h.speed *= -1; h.x = Math.max(0, Math.min(WORLD_WIDTH - h.width, h.x)); }
+                } else if (h.state === 'abducted') {
+                    if (h.abductor) { humanoidsCount++; h.x = h.abductor.x + LANDER_WIDTH/2 - h.width/2; h.y = h.abductor.y + h.abductor.height; }
+                    else { h.state = 'falling'; }
+                } else if (h.state === 'falling') {
+                    humanoidsCount++; h.y += 3;
+                    if (!shieldActive && isCircleRectCollision(player.x, player.y, PLAYER_COLLISION_RADIUS, h.x, h.y, h.width, h.height)) {
+                        score += CATCH_SCORE; playSound('human_rescue');
+                        createExplosion(h.x, h.y, 5, '#0F0', 0.5); humanoids.splice(i, 1); continue;
+                    }
+                    if (h.y >= GAME_HEIGHT - GROUND_HEIGHT - h.height) {
+                        createExplosion(h.x, GAME_HEIGHT - GROUND_HEIGHT - h.height / 2, 10, '#FFF', 0.7); playSound('human_fall_die');
+                        humanoids.splice(i, 1); checkPlanetDestroyed(); continue;
+                    }
+                }
+            }
+            humanoidsLeftEl.textContent = `Friends: ${humanoidsCount}`;
+        }
+        function updateEnemies(deltaTime) {
+             for (let i = enemies.length - 1; i >= 0; i--) {
+                 const enemy = enemies[i];
+                 const distToPlayerSq = distSq(player.x, player.y, enemy.x, enemy.y);
+                 const collisionDistSq = (PLAYER_COLLISION_RADIUS + Math.max(enemy.width, enemy.height) / 2)**2;
+                 if (!shieldActive && distToPlayerSq < collisionDistSq) { handlePlayerDeath(); return; }
+                 if (enemy.type === 'lander') updateLander(enemy, i);
+                 else if (enemy.type === 'mutant') updateMutant(enemy, player.x, player.y);
+                 enemy.x = wrapValue(enemy.x, WORLD_WIDTH);
+             }
+             // Spawning logic (same)
+             const maxEnemies = 6 + currentWave * 2;
+             if (enemies.length < maxEnemies && Math.random() < 0.02 * currentWave) {
+                 const freeHumanoids = humanoids.filter(h => h.state === 'walking' && !enemies.some(e => e.type === 'lander' && e.targetHumanoid === h));
+                 if (!planetDestroyed && freeHumanoids.length > 0 && Math.random() < 0.7) {
+                      const target = freeHumanoids[getRandomInt(0, freeHumanoids.length - 1)]; const newLander = createLander(target);
+                      if (distSq(player.x, player.y, newLander.x, newLander.y) > (GAME_WIDTH/4)**2) enemies.push(newLander);
+                 } else {
+                      const spawnX = wrapValue(player.x + (Math.random() > 0.5 ? 1 : -1) * getRandomFloat(GAME_WIDTH*0.6, GAME_WIDTH*1.2) , WORLD_WIDTH); const spawnY = getRandomInt(0, GAME_HEIGHT / 2);
+                      if (planetDestroyed || Math.random() < 0.4) enemies.push(createMutant(spawnX, spawnY));
+                      else { const newLander = createLander(null); newLander.x = spawnX; newLander.y = spawnY; newLander.state = 'hunting'; enemies.push(newLander); }
+                 }
+             }
+             if (!planetDestroyed && enemies.length === 0 && humanoids.length > 0) nextWave();
+        }
+        function updateLander(lander, index) {
+            const groundY = GAME_HEIGHT - GROUND_HEIGHT - HUMANOID_HEIGHT;
+            if (lander.state === 'descending') {
+                 if (lander.targetHumanoid && lander.targetHumanoid.state === 'walking') {
+                    const dx = lander.targetHumanoid.x - lander.x; const dy = (groundY + HUMANOID_HEIGHT / 2) - lander.y; const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist > 5) { lander.x += (dx / dist) * lander.speed; lander.y += (dy / dist) * lander.speed; }
+                    else { if (lander.targetHumanoid.state === 'walking') { lander.carrying = lander.targetHumanoid; lander.targetHumanoid.state = 'abducted'; lander.targetHumanoid.abductor = lander; lander.state = 'ascending'; lander.targetHumanoid = null; } else { lander.state = 'hunting'; lander.targetHumanoid = null;} }
+                    lander.x = wrapValue(lander.x, WORLD_WIDTH);
+                 } else { lander.state = 'hunting'; lander.targetHumanoid = null;}
+             } else if (lander.state === 'ascending') {
+                 lander.y -= lander.speed * 0.8; lander.x = wrapValue(lander.x, WORLD_WIDTH);
+                 if (lander.y < -lander.height) {
+                     if (lander.carrying) { const mutantX = lander.x; const mutantY = 10; enemies.push(createMutant(mutantX, mutantY)); const humanIndex = humanoids.indexOf(lander.carrying); if (humanIndex > -1) humanoids.splice(humanIndex, 1); checkPlanetDestroyed(); }
+                     enemies.splice(index, 1);
+                 }
+             } else if (lander.state === 'hunting') {
+                  const dx = player.x - lander.x; const dy = player.y - lander.y; const distDirectX = Math.abs(dx); const distWrappedX = WORLD_WIDTH - distDirectX; let moveXSign = 0;
+                  if (distDirectX <= distWrappedX) moveXSign = Math.sign(dx); else moveXSign = -Math.sign(dx);
+                  const totalDist = Math.sqrt(Math.min(distDirectX, distWrappedX)**2 + dy**2);
+                   if (totalDist > lander.speed) { const moveRatio = lander.speed / totalDist; lander.x += moveXSign * Math.min(distDirectX, distWrappedX) * moveRatio * 0.8; lander.y += dy * moveRatio; }
+                   lander.x = wrapValue(lander.x, WORLD_WIDTH); lander.y = Math.max(0, Math.min(GAME_HEIGHT - lander.height, lander.y));
+             }
+        }
+        function updateMutant(mutant, targetX, targetY) {
+             const dx = targetX - mutant.x; const dy = targetY - mutant.y; const distDirectX = Math.abs(dx); const distWrappedX = WORLD_WIDTH - distDirectX; let moveXSign = 0;
+             if (distDirectX <= distWrappedX) moveXSign = Math.sign(dx); else moveXSign = -Math.sign(dx);
+             const effectiveDistX = Math.min(distDirectX, distWrappedX); const totalDist = Math.sqrt(effectiveDistX**2 + dy**2);
+             if (totalDist > 1) { const moveRatio = mutant.speed / totalDist; mutant.x += moveXSign * effectiveDistX * moveRatio; mutant.y += dy * moveRatio; }
+             mutant.x = wrapValue(mutant.x, WORLD_WIDTH); mutant.y = Math.max(0, Math.min(GAME_HEIGHT - mutant.height, mutant.y));
+        }
+        function updateParticles(deltaTime) {
+             for (let i = particles.length - 1; i >= 0; i--) {
+                 const p = particles[i]; p.x += p.vx; p.y += p.vy; p.life--;
+                 if (p.life <= 0) particles.splice(i, 1);
+                 else p.x = wrapValue(p.x, WORLD_WIDTH);
+             }
+        }
+        function handlePlayerDeath() {
+             if (gameOver) return; lives--; createExplosion(player.x, player.y, 50, '#FFF', 1.5); playSound('explode_player'); livesEl.textContent = `Lives: ${lives}`;
+             shieldActive = false; shieldDurationTimer = 0; shieldCooldownTimer = SHIELD_COOLDOWN / 2;
+             if (lives <= 0) gameOver = true;
+             else { player.x = WORLD_WIDTH / 2; player.y = GAME_HEIGHT / 2; player.dx = 0; scrollOffset = player.x - GAME_WIDTH / 2; enemies = enemies.filter(e => distSq(player.x, player.y, e.x, e.y) > (GAME_WIDTH / 3)**2); }
+             updateShieldUI();
+        }
+        function useSmartBomb() {
+             if (smartBombs > 0 && !gameOver) {
+                 smartBombs--; bombsEl.textContent = `Bombs: ${smartBombs}`; playSound('explode_player');
+                 for (let i = enemies.length - 1; i >= 0; i--) {
+                     const enemy = enemies[i]; const screenX = worldToScreenX(enemy.x);
+                     if (screenX > -enemy.width && screenX < GAME_WIDTH) { createExplosion(enemy.x, enemy.y); score += ((enemy.type === 'lander') ? LANDER_SCORE : MUTANT_SCORE) / 2; if (enemy.type === 'lander' && enemy.carrying) { enemy.carrying.state = 'falling'; enemy.carrying.abductor = null; } enemies.splice(i, 1); }
+                 }
+                 // Restore original glow after flash
+                 canvas.style.boxShadow = '0 0 40px 30px #FFF'; setTimeout(() => { canvas.style.boxShadow = '0 0 15px #0f0'; }, 100);
+             }
+        }
+        function checkPlanetDestroyed() {
+             if (!planetDestroyed && humanoids.length === 0) {
+                 console.log("All friends lost! Mutants taking over!"); planetDestroyed = true; document.body.style.backgroundColor = '#400'; setTimeout(() => { document.body.style.backgroundColor = '#000'; }, 2000);
+                 for (let i = enemies.length - 1; i >= 0; i--) {
+                     if (enemies[i].type === 'lander') { const lander = enemies[i]; enemies.push(createMutant(lander.x, lander.y)); if (lander.carrying) lander.carrying.state = 'gone'; enemies.splice(i, 1); }
+                 }
+             }
+        }
+        // --- CORRECTED FUNCTION ---
+        function nextWave() {
+            currentWave++;
+            console.log(`Starting Wave ${currentWave}`);
+            score += humanoids.length * WAVE_HUMANOID_BONUS * currentWave; // Bonus points
+            if(currentWave % 2 === 0 && smartBombs < 5) smartBombs++; // Award bomb every 2 waves
+            if(currentWave % 4 === 0 && lives < 5) lives++; // Award life every 4 waves
+
+             // Spawn wave start enemies (slightly away from center)
+             let enemiesToSpawn = Math.min(5 + currentWave, 15);
+             for (let i = 0; i < enemiesToSpawn; i++) {
+                  const spawnX = wrapValue(WORLD_WIDTH/2 + (Math.random() > 0.5 ? 1 : -1) * getRandomFloat(GAME_WIDTH*0.6, WORLD_WIDTH*0.4) , WORLD_WIDTH);
+                  const spawnY = getRandomInt(0, GAME_HEIGHT / 3);
+                  if (planetDestroyed || Math.random() < 0.2 * currentWave) {
+                       enemies.push(createMutant(spawnX, spawnY));
+                  } else {
+                       const lander = createLander(null);
+                       lander.x = spawnX; lander.y = spawnY;
+                       lander.state = 'hunting';
+                       enemies.push(lander);
+                  }
+             }
+
+            // Corrected Line: Use drawUI, not updateUI
+            drawUI(); // Update score/bombs/lives display
+        }
+
+        // --- Draw Functions ---
+        function clearCanvas() { ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT); }
+
+        // Helper function to draw an entity that might wrap around the world
+        function drawWrapped(worldX, worldY, drawFunc) {
+            const screenX = worldToScreenX(worldX); // Primary screen position
+            drawFunc(screenX, worldY);
+            if (screenX < GAME_WIDTH * 0.1) drawFunc(screenX + WORLD_WIDTH, worldY);
+            else if (screenX > GAME_WIDTH * 0.9) drawFunc(screenX - WORLD_WIDTH, worldY);
+        }
+
+        function drawBackground() {
+            // Enhanced Starfield
+            ctx.fillStyle = '#FFF';
+            stars.forEach(star => {
+                const finalScreenX = wrapValue(star.x - scrollOffset * star.parallaxFactor, WORLD_WIDTH);
+                 const drawInstance = (sx) => {
+                     if (sx + star.size > 0 && sx < GAME_WIDTH) {
+                         ctx.fillStyle = (Math.random() < 0.03) ? '#AAA' : '#FFF';
+                         ctx.fillRect(sx, star.y, star.size, star.size);
+                     }
+                 };
+                 drawInstance(finalScreenX);
+                 drawInstance(finalScreenX - WORLD_WIDTH);
+                 drawInstance(finalScreenX + WORLD_WIDTH);
+             });
+
+            // Ground Line
+            ctx.strokeStyle = '#0F0'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(-10, GAME_HEIGHT);
+            const segmentWidth = 80;
+            for (let screenX = 0; screenX < GAME_WIDTH + segmentWidth; screenX += segmentWidth) {
+                 const worldX = wrapValue(scrollOffset + screenX, WORLD_WIDTH);
+                 const mountainHeight = 15 + Math.sin(worldX * 0.005) * 10 + Math.sin(worldX * 0.015 + 1) * 7 + Math.cos(worldX * 0.002) * 5;
+                 ctx.lineTo(screenX, GAME_HEIGHT - GROUND_HEIGHT - mountainHeight);
+            }
+            ctx.lineTo(GAME_WIDTH + 10, GAME_HEIGHT); ctx.stroke();
+            // Ground fill
+             ctx.lineTo(GAME_WIDTH + 10, GAME_HEIGHT + 10); ctx.lineTo(-10, GAME_HEIGHT+10); ctx.closePath();
+             ctx.fillStyle = '#030'; ctx.fill();
+        }
+
+         function drawPlayer() {
+             drawWrapped(player.x, player.y, (sx, sy) => {
+                 drawPlayerShape(sx, sy);
+                  if (shieldActive) drawShieldEffect(sx, sy);
+             });
+         }
+         function drawPlayerShape(screenX, screenY) {
+            const w = PLAYER_BASE_WIDTH; const h = PLAYER_BASE_HEIGHT; ctx.fillStyle = '#0FF'; ctx.beginPath();
+            if (player.facingRight) { ctx.moveTo(screenX, screenY + h * 0.1); ctx.lineTo(screenX + w * 0.6, screenY + h * 0.1); ctx.lineTo(screenX + w, screenY + h / 2); ctx.lineTo(screenX + w * 0.6, screenY + h * 0.9); ctx.lineTo(screenX, screenY + h * 0.9); ctx.lineTo(screenX + w * 0.1, screenY + h / 2); }
+            else { ctx.moveTo(screenX + w, screenY + h * 0.1); ctx.lineTo(screenX + w * 0.4, screenY + h * 0.1); ctx.lineTo(screenX, screenY + h / 2); ctx.lineTo(screenX + w * 0.4, screenY + h * 0.9); ctx.lineTo(screenX + w, screenY + h * 0.9); ctx.lineTo(screenX + w * 0.9, screenY + h / 2); }
+            ctx.closePath(); ctx.fill();
+             // Engine Flame
+            const thrusting = keys.ArrowLeft || keys.ArrowRight || keys.KeyA || keys.KeyD;
+             if (thrusting) { ctx.fillStyle = '#F80'; const flameW = 10 + Math.random() * 5; const flameX = player.facingRight ? screenX - flameW + 5: screenX + w - 5; ctx.beginPath(); ctx.moveTo(flameX, screenY + h * 0.4); ctx.lineTo(flameX, screenY + h * 0.6); ctx.lineTo(player.facingRight ? flameX - flameW : flameX + flameW, screenY + h / 2); ctx.closePath(); ctx.fill(); }
+         }
+         function drawShieldEffect(screenX, screenY) {
+              const centerX = screenX + PLAYER_BASE_WIDTH / 2; const centerY = screenY + PLAYER_BASE_HEIGHT / 2; const radius = PLAYER_COLLISION_RADIUS * 1.8;
+              const pulseFactor = 0.8 + 0.2 * Math.abs(Math.sin((SHIELD_DURATION - shieldDurationTimer) * 0.01));
+              const currentRadius = radius * pulseFactor; const alpha = 0.3 + 0.4 * pulseFactor;
+              ctx.strokeStyle = `rgba(0, 255, 255, ${alpha})`; ctx.lineWidth = 2 + pulseFactor; ctx.beginPath(); ctx.arc(centerX, centerY, currentRadius, 0, Math.PI * 2); ctx.stroke();
+         }
+
+        function drawBullets() {
+            ctx.fillStyle = '#FF0';
+            bullets.forEach(bullet => {
+                 drawWrapped(bullet.x, bullet.y, (sx, sy) => {
+                      ctx.fillRect(sx, sy, bullet.width, bullet.height);
+                 });
+            });
+        }
+        function drawHumanoids() {
+            humanoids.forEach(h => {
+                 drawWrapped(h.x, h.y, (sx, sy) => {
+                      ctx.fillStyle = h.state === 'falling' ? '#FFF' : '#0F0';
+                      ctx.fillRect(sx, sy, h.width, h.height);
+                 });
+            });
+        }
+        function drawEnemies() {
+            enemies.forEach(enemy => {
+                 drawWrapped(enemy.x, enemy.y, (sx, sy) => {
+                     const sw = enemy.width; const sh = enemy.height;
+                     if (enemy.type === 'lander') { ctx.fillStyle = '#F0F'; ctx.fillRect(sx, sy, sw, sh * 0.7); ctx.fillStyle = '#D0D'; ctx.fillRect(sx + sw * 0.1, sy + sh * 0.6, sw * 0.2, sh * 0.4); ctx.fillRect(sx + sw * 0.7, sy + sh * 0.6, sw * 0.2, sh * 0.4); }
+                     else if (enemy.type === 'mutant') { ctx.fillStyle = '#F00'; ctx.beginPath(); ctx.moveTo(sx + sw * 0.5, sy); ctx.lineTo(sx + sw, sy + sh * 0.5); ctx.lineTo(sx + sw * 0.7, sy + sh); ctx.lineTo(sx + sw * 0.3, sy + sh); ctx.lineTo(sx, sy + sh * 0.5); ctx.closePath(); ctx.fill(); }
+                 });
+            });
+        }
+        function drawParticles() {
+             particles.forEach(p => {
+                 drawWrapped(p.x, p.y, (sx, sy) => {
+                     ctx.fillStyle = p.color;
+                     ctx.globalAlpha = Math.max(0, p.life / Math.max(PARTICLE_LIFE, THRUST_PARTICLE_LIFE));
+                     ctx.fillRect(sx - p.size / 2, sy - p.size / 2, p.size, p.size); // Draw centered
+                     ctx.globalAlpha = 1.0;
+                 });
+             });
+         }
+
+        function updateShieldUI() {
+             if (shieldActive) { shieldStatusEl.textContent = `Shield Active! (${(shieldDurationTimer / 1000).toFixed(1)}s)`; shieldStatusEl.className = 'active'; }
+             else if (shieldCooldownTimer > 0) { shieldStatusEl.textContent = `Shield Cooldown (${(shieldCooldownTimer / 1000).toFixed(1)}s)`; shieldStatusEl.className = 'cooldown'; }
+             else { shieldStatusEl.textContent = 'Shield Ready'; shieldStatusEl.className = ''; }
+         }
+        // --- CORRECTED FUNCTION NAME ---
+        function drawUI() {
+            scoreEl.textContent = `Score: ${score}`;
+            livesEl.textContent = `Lives: ${lives}`;
+            bombsEl.textContent = `Bombs: ${smartBombs}`;
+            // humanoidsLeftEl updated elsewhere
+            updateShieldUI(); // Update shield status text
+        }
+        function drawGameOver() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'; ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+            ctx.fillStyle = '#F00'; ctx.font = '72px "Courier New", Courier, monospace'; ctx.textAlign = 'center';
+            ctx.fillText('GAME OVER', GAME_WIDTH / 2, GAME_HEIGHT / 2 - 40);
+            ctx.fillStyle = '#FF0'; ctx.font = '36px "Courier New", Courier, monospace';
+            ctx.fillText(`Final Score: ${score}`, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 30);
+            ctx.fillStyle = '#0F0'; ctx.font = '24px "Courier New", Courier, monospace';
+            ctx.fillText('Press ENTER to Play Again', GAME_WIDTH / 2, GAME_HEIGHT / 2 + 80);
+            ctx.textAlign = 'left';
+        }
+
+        // --- Game Loop ---
+        function gameLoop(timestamp) {
+            const deltaTime = timestamp - lastTimestamp;
+            lastTimestamp = timestamp;
+
+            if (!gameStarted) {
+                requestAnimationFrame(gameLoop); return; // Wait if not started
+            }
+
+            // --- Input Handling ---
+             handleInput();
+
+            // --- Updates ---
+            updatePlayer(deltaTime);
+            updateBullets(deltaTime);
+            updateEnemies(deltaTime);
+            updateHumanoids(deltaTime);
+            updateParticles(deltaTime);
+
+            // --- Drawing ---
+            clearCanvas();
+            drawBackground();
+            drawParticles();
+            drawHumanoids();
+            drawEnemies();
+            drawBullets();
+            drawPlayer();
+            drawUI();
+
+            // --- Game Over Check ---
+             if (gameOver) {
+                 drawGameOver();
+             }
+
+            requestAnimationFrame(gameLoop); // Continue loop
+        }
+
+         // --- Input Handling (Placeholder) ---
+         function handleInput() {
+             // Direct key state reading in updatePlayer is sufficient for now.
+         }
+
+
+        // --- Initialization ---
+        // --- CORRECTED FUNCTION ---
+        function initGame() {
+            // console.log("initGame called"); // DEBUG
+            initAudio(); // Ensure audio is ready
+
+            score = 0; lives = 3; smartBombs = 3; humanoidsCount = INITIAL_HUMANOIDS;
+            scrollOffset = WORLD_WIDTH / 2 - GAME_WIDTH / 2; currentWave = 0; // Start at 0, nextWave increments to 1
+            gameOver = false; planetDestroyed = false;
+
+            player = createPlayer();
+            bullets = []; enemies = []; humanoids = []; particles = []; stars = [];
+            createStars();
+
+            shieldActive = false; shieldCooldownTimer = 0; shieldDurationTimer = 0;
+
+            for (let i = 0; i < INITIAL_HUMANOIDS; i++) humanoids.push(createHumanoid());
+            humanoidsCount = humanoids.length; humanoidsLeftEl.textContent = `Friends: ${humanoidsCount}`;
+
+            nextWave(); // Setup wave 1 enemies and increments wave counter to 1
+
+            // Corrected Line: Use drawUI, not updateUI
+            drawUI(); // Initial UI update
+
+            // This flag MUST be set *before* starting the loop
+            gameStarted = true; // Set game as started
+             // console.log("Game started flag set"); // DEBUG
+
+            startupScreen.style.display = 'none';
+
+            if (lastTimestamp === 0) { // Only set on first init
+                 lastTimestamp = performance.now();
+                 requestAnimationFrame(gameLoop); // Start the loop IF NOT ALREADY RUNNING
+                 // console.log("Game loop started"); // DEBUG
+            } else {
+                 lastTimestamp = performance.now(); // Reset timestamp for subsequent plays
+                 // Loop should already be running from previous frame, just updating state
+            }
+        }
+
+        // --- Event Listeners ---
+        window.addEventListener('keydown', (e) => {
+            initAudio(); // Try to init/resume audio on any key press
+
+            // --- Enter Key Start/Restart ---
+            if (e.code === 'Enter') {
+                 // console.log("Enter detected. gameStarted:", gameStarted, "gameOver:", gameOver); // DEBUG
+                if (!gameStarted || gameOver) {
+                    e.preventDefault(); // Prevent potential default form submission
+                    initGame();
+                }
+                return; // Don't process other keys if Enter was handled
+            }
+
+            // --- In-Game Keys ---
+            if (gameStarted && !gameOver) {
+                if (e.code in keys) {
+                     if (!keys[e.code]) { // Process only on first press down
+                          keys[e.code] = true;
+                          if (e.code === 'KeyB') { useSmartBomb(); }
+                          // Shield handled in updateShield
+                     }
+                }
+
+                // Prevent default browser actions for game keys
+                if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ShiftLeft', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyB'].includes(e.code)) {
+                    e.preventDefault();
+                }
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.code in keys) {
+                keys[e.code] = false;
+            }
+        });
+
+        // Initial Setup: Game waits for Enter press.
+
+    </script>
+
+</body>
+</html>
